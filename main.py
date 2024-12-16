@@ -15,6 +15,9 @@ port = 30
 
 base_folder = "./test"
 
+# Semaphore to control access to files
+file_semaphore = threading.Semaphore(1)
+
 class FolderSyncHandler(FileSystemEventHandler):
     def __init__(self, base_folder, peer_addr, port):
         self.base_folder = base_folder
@@ -30,6 +33,7 @@ class FolderSyncHandler(FileSystemEventHandler):
             send_file(event.src_path, self.base_folder, self.peer_addr, self.port)
 
 def send_file(file_path, base_folder, peer_addr, port):
+    file_semaphore.acquire()
     try:
         relative_path = os.path.relpath(file_path, base_folder)
         with socket.socket(socket.AF_BLUETOOTH, socket.SOCK_STREAM, socket.BTPROTO_RFCOMM) as sock:
@@ -41,9 +45,11 @@ def send_file(file_path, base_folder, peer_addr, port):
                     if not data:
                         break
                     sock.sendall(data)
+        print(f"Sent file {relative_path} to {peer_addr}")
     except Exception as e:
-        # print(f"Failed to send file {file_path}: {e}")
-        pass
+        print(f"Failed to send file {file_path}: {e}")
+    finally:
+        file_semaphore.release()
 
 def start_server(local_addr, port, base_folder):
     sock = socket.socket(socket.AF_BLUETOOTH, socket.SOCK_STREAM, socket.BTPROTO_RFCOMM)
@@ -52,6 +58,7 @@ def start_server(local_addr, port, base_folder):
 
     while True:
         client_sock, address = sock.accept()
+        file_semaphore.acquire()
         try:
             data = client_sock.recv(1024).decode().split('\n', 1)
             relative_path = data[0]
@@ -63,12 +70,13 @@ def start_server(local_addr, port, base_folder):
                     if not data:
                         break
                     f.write(data)
-            # print(f"Received file {relative_path} from {address[0]}")
+            print(f"Received file {relative_path} from {address[0]}")
         except Exception as e:
-            pass
-            # print(f"Error receiving file: {e}")
+            print(f"Error receiving file: {e}")
         finally:
             client_sock.close()
+            file_semaphore.release()
+            time.sleep(1)  # Add delay to avoid resource contention
 
 # Start the server thread
 server_thread = threading.Thread(target=start_server, args=(local_addr, port, base_folder))
