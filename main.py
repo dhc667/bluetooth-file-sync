@@ -2,70 +2,88 @@ import os
 import time
 import socket
 import threading
-import shutil
+import sys
+from watchdog.observers import Observer
+from watchdog.events import FileSystemEventHandler
 
-def get_files_with_timestamps(folder):
-    files = {}
-    for root, _, filenames in os.walk(folder):
-        for filename in filenames:
-            full_path = os.path.join(root, filename)
-            relative_path = os.path.relpath(full_path, folder)
-            files[relative_path] = os.path.getmtime(full_path)  # Last modified time
-    return files
+# Bluetooth addresses of the devices
+peer_addr = "B8:27:EB:10:BB:88"
+local_addr = "2C:0D:A7:6F:99:C8"
 
-def send_file(sock, file_path, base_folder):
+# Communication channel
+port = 30
+
+base_folder = "/path/to/folder"
+
+class FolderSyncHandler(FileSystemEventHandler):
+    def __init__(self, base_folder, peer_addr, port):
+        self.base_folder = base_folder
+        self.peer_addr = peer_addr
+        self.port = port
+
+    def on_modified(self, event):
+        if not event.is_directory:
+            send_file(event.src_path, self.base_folder, self.peer_addr, self.port)
+
+    def on_created(self, event):
+        if not event.is_directory:
+            send_file(event.src_path, self.base_folder, self.peer_addr, self.port)
+
+def send_file(file_path, base_folder, peer_addr, port):
     try:
         relative_path = os.path.relpath(file_path, base_folder)
-        with open(file_path, 'rb') as f:
-            sock.sendall(relative_path.encode() + b'\n')
-            while True:
-                data = f.read(1024)
-                if not data:
-                    break
-                sock.sendall(data)
+        with socket.socket(socket.AF_BLUETOOTH, socket.SOCK_STREAM, socket.BTPROTO_RFCOMM) as sock:
+            sock.connect((peer_addr, port))
+            with open(file_path, 'rb') as f:
+                sock.sendall(relative_path.encode() + b'\n')
+                while True:
+                    data = f.read(1024)
+                    if not data:
+                        break
+                    sock.sendall(data)
     except Exception as e:
         print(f"Failed to send file {file_path}: {e}")
 
-def start_server(host, port, base_folder):
-    server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    server_socket.bind((host, port))
-    server_socket.listen(1)
-    print(f"Server listening on {host}:{port}")
+def start_server(local_addr, port, base_folder):
+    sock = socket.socket(socket.AF_BLUETOOTH, socket.SOCK_STREAM, socket.BTPROTO_RFCOMM)
+    sock.bind((local_addr, port))
+    sock.listen(1)
 
     while True:
-        client_socket, addr = server_socket.accept()
-        print(f"Connection from {addr}")
-        threading.Thread(target=handle_client, args=(client_socket, base_folder)).start()
+        client_sock, address = sock.accept()
+        try:
+            data = client_sock.recv(1024).decode().split('\n', 1)
+            relative_path = data[0]
+            file_path = os.path.join(base_folder, relative_path)
+            os.makedirs(os.path.dirname(file_path), exist_ok=True)
+            with open(file_path, 'wb') as f:
+                while True:
+                    data = client_sock.recv(1024)
+                    if not data:
+                        break
+                    f.write(data)
+            print(f"Received file {relative_path} from {address[0]}")
+        except Exception as e:
+            print(f"Error receiving file: {e}")
+        finally:
+            client_sock.close()
 
-def handle_client(client_socket, base_folder):
-    try:
-        while True:
-            data = client_socket.recv(1024)
-            if not data:
-                break
-            # Handle received data
-            print(f"Received data: {data}")
-    except Exception as e:
-        print(f"Error handling client: {e}")
-    finally:
-        client_socket.close()
+# Start the server thread
+server_thread = threading.Thread(target=start_server, args=(local_addr, port, base_folder))
+server_thread.daemon = True
+server_thread.start()
 
-def connect_to_server(host, port):
-    client_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    client_socket.connect((host, port))
-    return client_socket
+# Set up folder monitoring
+event_handler = FolderSyncHandler(base_folder, peer_addr, port)
+observer = Observer()
+observer.schedule(event_handler, base_folder, recursive=True)
+observer.start()
 
-# Example usage
-if __name__ == "__main__":
-    base_folder = "/path/to/folder"
-    host = "localhost"
-    port = 12345
+try:
+    while True:
+        time.sleep(1)
+except KeyboardInterrupt:
+    observer.stop()
+observer.join()
 
-    # Start server in a separate thread
-    threading.Thread(target=start_server, args=(host, port, base_folder)).start()
-
-    # Connect to server and send a file
-    time.sleep(1)  # Wait for server to start
-    client_socket = connect_to_server(host, port)
-    send_file(client_socket, "/path/to/file.txt", base_folder)
-    client_socket.close()
+sys.exit()
