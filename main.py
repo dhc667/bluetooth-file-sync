@@ -7,13 +7,13 @@ from watchdog.observers import Observer
 from watchdog.events import FileSystemEventHandler
 
 # Bluetooth addresses of the devices
-peer_addr = "B8:27:EB:10:BB:88"
-local_addr = "2C:0D:A7:6F:99:C8"
+peer_addr = "B0:C0:90:6A:36:08"
+local_addr = "48:E7:DA:F5:29:AC"
 
 # Communication channel
 port = 30
 
-base_folder = "/path/to/folder"
+base_folder = "./test"
 
 class FolderSyncHandler(FileSystemEventHandler):
     def __init__(self, base_folder, peer_addr, port):
@@ -42,7 +42,8 @@ def send_file(file_path, base_folder, peer_addr, port):
                         break
                     sock.sendall(data)
     except Exception as e:
-        print(f"Failed to send file {file_path}: {e}")
+        # print(f"Failed to send file {file_path}: {e}")
+        pass
 
 def start_server(local_addr, port, base_folder):
     sock = socket.socket(socket.AF_BLUETOOTH, socket.SOCK_STREAM, socket.BTPROTO_RFCOMM)
@@ -62,9 +63,10 @@ def start_server(local_addr, port, base_folder):
                     if not data:
                         break
                     f.write(data)
-            print(f"Received file {relative_path} from {address[0]}")
+            # print(f"Received file {relative_path} from {address[0]}")
         except Exception as e:
-            print(f"Error receiving file: {e}")
+            pass
+            # print(f"Error receiving file: {e}")
         finally:
             client_sock.close()
 
